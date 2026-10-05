@@ -1,0 +1,520 @@
+// ========================================
+// LULC PROJECT - KHARAGPUR
+// Step 4: Classification Features
+// ========================================
+
+var aoi = table;
+
+
+// ========================================
+// 1. Cloud masking
+// ========================================
+
+function maskS2(image) {
+
+  var scl = image.select('SCL');
+
+  var mask = scl.neq(3)
+    .and(scl.neq(8))
+    .and(scl.neq(9))
+    .and(scl.neq(10))
+    .and(scl.neq(11));
+
+  return image.updateMask(mask);
+}
+
+
+// ========================================
+// 2. Sentinel-2 collection
+// ========================================
+
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(aoi)
+  .filterDate('2018-10-01', '2018-12-31')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+  .map(maskS2);
+
+
+// ========================================
+// 3. Composite
+// ========================================
+
+var composite = s2.median();
+
+
+// ========================================
+// 4. Indices
+// ========================================
+
+var ndvi = composite
+  .normalizedDifference(['B8', 'B4'])
+  .rename('NDVI');
+
+var ndwi = composite
+  .normalizedDifference(['B3', 'B8'])
+  .rename('NDWI');
+
+var ndbi = composite
+  .normalizedDifference(['B11', 'B8'])
+  .rename('NDBI');
+
+
+// ========================================
+// 5. Create feature image
+// ========================================
+
+var features = composite.select([
+  'B2',
+  'B3',
+  'B4',
+  'B8',
+  'B11',
+  'B12'
+])
+.addBands(ndvi)
+.addBands(ndwi)
+.addBands(ndbi);
+
+print('Classification bands:', features.bandNames());
+
+
+// ========================================
+// 6. Display RGB
+// ========================================
+
+Map.centerObject(aoi, 11);
+
+Map.addLayer(
+  composite,
+  {
+    bands: ['B4', 'B3', 'B2'],
+    min: 0,
+    max: 3000
+  },
+  'RGB 2018'
+);
+
+Map.addLayer(
+  aoi.style({
+    color: 'red',
+    fillColor: '00000000',
+    width: 2
+  }),
+  {},
+  'Kharagpur AOI'
+);
+// ==========================================
+// WATER TRAINING SAMPLES
+// Class 0 = Water
+// ==========================================
+
+var waterSamples = ee.FeatureCollection([
+  ee.Feature(water, {
+    class: 0
+  })
+]);
+print('Water training samples:', waterSamples);
+Map.addLayer(waterSamples, {color: 'blue'}, 'Water Samples');
+// ==========================================
+// VEGETATION TRAINING SAMPLES
+// Class 1 = Vegetation
+// ==========================================
+
+var vegetationSamples = ee.FeatureCollection([
+  ee.Feature(vegetation, {
+    class: 1
+  })
+]);
+
+print('Vegetation training samples:', vegetationSamples);
+Map.addLayer(
+  vegetationSamples,
+  {color: 'green'},
+  'Vegetation Samples'
+);
+
+// ==========================================
+// AGRICULTURE TRAINING SAMPLES
+// Class 2 = Agriculture
+// ==========================================
+
+var agricultureSamples = ee.FeatureCollection(
+  agriculture.coordinates().map(function(coords) {
+    return ee.Feature(
+      ee.Geometry.Polygon(coords),
+      {class: 2}
+    );
+  })
+);
+
+print('Agriculture training samples:', agricultureSamples);
+
+
+// ==========================================
+// BARREN LAND TRAINING SAMPLES
+// Class 3 = Barren land
+// ==========================================
+
+var barrenSamples = ee.FeatureCollection(
+  barren.coordinates().map(function(coords) {
+    return ee.Feature(
+      ee.Geometry.Polygon(coords),
+      {class: 3}
+    );
+  })
+);
+
+// ==========================================
+// BUILT-UP TRAINING SAMPLES
+// Class 4 = Built-up
+// ==========================================
+
+var builtupSamples = ee.FeatureCollection(
+  builtup.coordinates().map(function(coords) {
+    return ee.Feature(
+      ee.Geometry.Polygon(coords),
+      {class: 4}
+    );
+  })
+);
+
+print('Built-up training samples:', builtupSamples);
+
+// ==========================================
+// MERGE ALL 5 TRAINING CLASSES
+// ==========================================
+
+var trainingSamples = waterSamples
+  .merge(vegetationSamples)
+  .merge(agricultureSamples)
+  .merge(barrenSamples)
+  .merge(builtupSamples);
+
+print('ALL TRAINING SAMPLES:', trainingSamples);
+
+// Check which classes are present
+print(
+  'Class values:',
+  trainingSamples.aggregate_array('class').distinct().sort()
+);
+
+print('Agriculture training samples:', agricultureSamples);
+print('Barren training samples:', barrenSamples);
+
+// ==========================================
+// STEP 5: EXTRACT TRAINING PIXELS
+// ==========================================
+
+// Sample each class separately
+
+var waterTraining = features.sampleRegions({
+  collection: waterSamples,
+  properties: ['class'],
+  scale: 10,
+  geometries: true,
+  tileScale: 4
+});
+
+var vegetationTraining = features.sampleRegions({
+  collection: vegetationSamples,
+  properties: ['class'],
+  scale: 10,
+  geometries: true,
+  tileScale: 4
+});
+
+var agricultureTraining = features.sampleRegions({
+  collection: agricultureSamples,
+  properties: ['class'],
+  scale: 10,
+  geometries: true,
+  tileScale: 4
+});
+
+var barrenTraining = features.sampleRegions({
+  collection: barrenSamples,
+  properties: ['class'],
+  scale: 10,
+  geometries: true,
+  tileScale: 4
+});
+
+var builtupTraining = features.sampleRegions({
+  collection: builtupSamples,
+  properties: ['class'],
+  scale: 10,
+  geometries: true,
+  tileScale: 4
+});
+
+// Combine all five
+var trainingData = waterTraining
+  .merge(vegetationTraining)
+  .merge(agricultureTraining)
+  .merge(barrenTraining)
+  .merge(builtupTraining);
+
+print('Water training pixels:', waterTraining.size());
+print('Vegetation training pixels:', vegetationTraining.size());
+print('Agriculture training pixels:', agricultureTraining.size());
+print('Barren training pixels:', barrenTraining.size());
+print('Built-up training pixels:', builtupTraining.size());
+
+print('TOTAL TRAINING PIXELS:', trainingData.size());
+
+print(
+  'Classes in training data:',
+  trainingData.aggregate_array('class').distinct().sort()
+);
+
+
+print('Number of training pixels:', trainingData.size());
+
+// ==========================================
+// STEP 6: SPLIT TRAINING DATA
+// 70% Training / 30% Validation
+// ==========================================
+
+var trainingDataRandom = trainingData.randomColumn({
+  columnName: 'random',
+  seed: 42
+});
+
+var trainingSet = trainingDataRandom.filter(
+  ee.Filter.lt('random', 0.7)
+);
+
+var validationSet = trainingDataRandom.filter(
+  ee.Filter.gte('random', 0.7)
+);
+
+print('Training set size:', trainingSet.size());
+print('Validation set size:', validationSet.size());
+
+
+// ==========================================
+// STEP 7: TRAIN RANDOM FOREST CLASSIFIER
+// ==========================================
+
+var classifier = ee.Classifier.smileRandomForest({
+  numberOfTrees: 100,
+  seed: 42
+}).train({
+  features: trainingSet,
+  classProperty: 'class',
+  inputProperties: features.bandNames()
+});
+
+print('Random Forest classifier:', classifier);
+
+
+// ==========================================
+// STEP 8: CLASSIFY 2018 IMAGE
+// ==========================================
+
+var classified2018 = features.classify(classifier);
+
+print('2018 Classified Image:', classified2018);
+
+// ==========================================
+// STEP 9: ACCURACY ASSESSMENT
+// ==========================================
+
+// Classify the validation pixels
+var validationClassified = validationSet.classify(classifier);
+
+
+// Create confusion matrix
+var confusionMatrix = validationClassified.errorMatrix(
+  'class',
+  'classification'
+);
+
+print('Confusion Matrix:', confusionMatrix);
+
+
+// Overall accuracy
+print(
+  'Overall Accuracy:',
+  confusionMatrix.accuracy()
+);
+
+
+// Kappa coefficient
+print(
+  'Kappa:',
+  confusionMatrix.kappa()
+);
+
+
+// Producer's Accuracy
+print(
+  "Producer's Accuracy:",
+  confusionMatrix.producersAccuracy()
+);
+
+
+// User's Accuracy
+print(
+  "User's Accuracy:",
+  confusionMatrix.consumersAccuracy()
+);
+
+// ==========================================
+// STEP 10: 2018 LULC AREA STATISTICS
+// ==========================================
+
+var classNames = [
+  'Water',
+  'Vegetation',
+  'Agriculture',
+  'Barren',
+  'Built-up'
+];
+
+var classAreas = ee.FeatureCollection(
+  ee.List.sequence(0, 4).map(function(classValue) {
+
+    // Convert class number to an Image
+    var classImage = ee.Image.constant(classValue);
+
+    // Select pixels belonging to this class
+    var classArea = ee.Image.pixelArea()
+      .updateMask(
+        classified2018.eq(classImage)
+      )
+      .reduceRegion({
+        reducer: ee.Reducer.sum(),
+        geometry: aoi,
+        scale: 10,
+        maxPixels: 1e10
+      })
+      .get('area');
+
+    // Convert square metres to hectares
+    var areaHa = ee.Number(classArea).divide(10000);
+
+    return ee.Feature(null, {
+      class: classValue,
+      className: ee.List(classNames).get(classValue),
+      area_hectares: areaHa
+    });
+  })
+);
+
+print('2018 LULC Area by Class:', classAreas);
+print(
+  'Water area (ha):',
+  classAreas.filter(ee.Filter.eq('class', 0))
+    .first()
+    .get('area_hectares')
+);
+
+print(
+  'Vegetation area (ha):',
+  classAreas.filter(ee.Filter.eq('class', 1))
+    .first()
+    .get('area_hectares')
+);
+
+print(
+  'Agriculture area (ha):',
+  classAreas.filter(ee.Filter.eq('class', 2))
+    .first()
+    .get('area_hectares')
+);
+
+print(
+  'Barren area (ha):',
+  classAreas.filter(ee.Filter.eq('class', 3))
+    .first()
+    .get('area_hectares')
+);
+
+print(
+  'Built-up area (ha):',
+  classAreas.filter(ee.Filter.eq('class', 4))
+    .first()
+    .get('area_hectares')
+);
+// ==========================================
+// DISPLAY 2018 LULC
+// ==========================================
+
+var lulcPalette = [
+  '0000FF',  // 0 = Water
+  '00FF00',  // 1 = Vegetation
+  'FFFF00',  // 2 = Agriculture
+  'D2B48C',  // 3 = Barren
+  'FF0000'   // 4 = Built-up
+];
+
+Map.addLayer(
+  classified2018,
+  {
+    min: 0,
+    max: 4,
+    palette: lulcPalette
+  },
+  'LULC 2018'
+);
+
+// ==========================================
+// DIAGNOSTIC: CHECK VALID 2018 PIXELS
+// ==========================================
+
+print('Composite bands:', composite.bandNames());
+
+var validPixels = composite.reduceRegion({
+  reducer: ee.Reducer.count(),
+  geometry: aoi,
+  scale: 10,
+  maxPixels: 1e8
+});
+
+print('Valid pixels in 2018 composite:', validPixels);
+
+// ==========================================
+// DIAGNOSTIC: VALID PIXELS INSIDE EACH CLASS
+// ==========================================
+
+var waterCheck = composite.reduceRegion({
+  reducer: ee.Reducer.count(),
+  geometry: waterSamples.geometry(),
+  scale: 10,
+  maxPixels: 1e8
+});
+
+var vegetationCheck = composite.reduceRegion({
+  reducer: ee.Reducer.count(),
+  geometry: vegetationSamples.geometry(),
+  scale: 10,
+  maxPixels: 1e8
+});
+
+var agricultureCheck = composite.reduceRegion({
+  reducer: ee.Reducer.count(),
+  geometry: agricultureSamples.geometry(),
+  scale: 10,
+  maxPixels: 1e8
+});
+
+var barrenCheck = composite.reduceRegion({
+  reducer: ee.Reducer.count(),
+  geometry: barrenSamples.geometry(),
+  scale: 10,
+  maxPixels: 1e8
+});
+
+var builtupCheck = composite.reduceRegion({
+  reducer: ee.Reducer.count(),
+  geometry: builtupSamples.geometry(),
+  scale: 10,
+  maxPixels: 1e8
+});
+
+print('Water valid pixels:', waterCheck);
+print('Vegetation valid pixels:', vegetationCheck);
+print('Agriculture valid pixels:', agricultureCheck);
+print('Barren valid pixels:', barrenCheck);
+print('Built-up valid pixels:', builtupCheck);
