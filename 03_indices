@@ -1,0 +1,153 @@
+// ========================================
+// LULC PROJECT - KHARAGPUR
+// Step 3: Spectral Indices
+// ========================================
+
+// Study Area
+var aoi = table;
+
+
+// ========================================
+// 1. Cloud masking function
+// ========================================
+
+function maskS2(image) {
+
+  var scl = image.select('SCL');
+
+  var mask = scl.neq(3)
+    .and(scl.neq(8))
+    .and(scl.neq(9))
+    .and(scl.neq(10))
+    .and(scl.neq(11));
+
+  return image.updateMask(mask);
+}
+
+
+// ========================================
+// 2. Load Sentinel-2
+// ========================================
+
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(aoi)
+  .filterDate('2018-10-01', '2018-12-31')
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+  .map(maskS2);
+
+
+// ========================================
+// 3. Create clean composite
+// ========================================
+
+var composite = s2.median();
+
+
+// ========================================
+// 4. Calculate NDVI
+// ========================================
+
+// NDVI = (NIR - Red) / (NIR + Red)
+
+var ndvi = composite.normalizedDifference(
+  ['B8', 'B4']
+).rename('NDVI');
+
+
+// ========================================
+// 5. Calculate NDWI
+// ========================================
+
+// NDWI = (Green - NIR) / (Green + NIR)
+
+var ndwi = composite.normalizedDifference(
+  ['B3', 'B8']
+).rename('NDWI');
+
+
+// ========================================
+// 6. Calculate NDBI
+// ========================================
+
+// NDBI = (SWIR - NIR) / (SWIR + NIR)
+
+var ndbi = composite.normalizedDifference(
+  ['B11', 'B8']
+).rename('NDBI');
+
+
+// ========================================
+// 7. Display RGB
+// ========================================
+
+Map.centerObject(aoi, 11);
+
+Map.addLayer(
+  composite,
+  {
+    bands: ['B4', 'B3', 'B2'],
+    min: 0,
+    max: 3000
+  },
+  'Sentinel-2 RGB 2018'
+);
+
+
+// ========================================
+// 8. Display NDVI
+// ========================================
+
+Map.addLayer(
+  ndvi,
+  {
+    min: -1,
+    max: 1,
+    palette: ['brown', 'yellow', 'green']
+  },
+  'NDVI 2018'
+);
+
+
+// ========================================
+// 9. Display NDWI
+// ========================================
+
+Map.addLayer(
+  ndwi,
+  {
+    min: -1,
+    max: 1,
+    palette: ['brown', 'white', 'blue']
+  },
+  'NDWI 2018'
+);
+
+
+// ========================================
+// 10. Display NDBI
+// ========================================
+
+Map.addLayer(
+  ndbi,
+  {
+    min: -1,
+    max: 1,
+    palette: ['green', 'white', 'red']
+  },
+  'NDBI 2018'
+);
+
+
+// ========================================
+// 11. Display AOI
+// ========================================
+
+Map.addLayer(
+  aoi.style({
+    color: 'red',
+    fillColor: '00000000',
+    width: 2
+  }),
+  {},
+  'Kharagpur AOI'
+);
